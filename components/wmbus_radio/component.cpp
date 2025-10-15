@@ -96,8 +96,8 @@ void Radio::receive_frame() {
 
   // For interrupt-driven radios, wait up to 1 minute for interrupt
   // For polling radios, timeout quickly to poll frequently
-  // At 100kbps, 12.5 bytes/ms arrive - poll every 2ms to stay ahead of 64-byte FIFO
-  uint32_t timeout_ms = use_interrupt ? 60000 : 2; // 1 minute vs 2ms
+  // At 100kbps, 12.5 bytes/ms arrive - default 2ms polling stays ahead of 64-byte FIFO
+  uint32_t timeout_ms = use_interrupt ? 60000 : this->radio->get_polling_interval();
 
   if (!ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(timeout_ms))) {
     if (use_interrupt) {

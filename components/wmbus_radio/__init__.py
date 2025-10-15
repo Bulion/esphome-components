@@ -16,6 +16,7 @@ from esphome.const import (
 
 CONF_GDO0_PIN = "gdo0_pin"
 CONF_GDO2_PIN = "gdo2_pin"
+CONF_POLLING_INTERVAL = "polling_interval"
 from pathlib import Path
 
 CODEOWNERS = ["@SzczepanLeon", "@kubasaw"]
@@ -88,6 +89,11 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_GDO0_PIN): pins.internal_gpio_input_pin_schema,
             cv.Optional(CONF_GDO2_PIN): pins.internal_gpio_input_pin_schema,
             cv.Optional(CONF_FREQUENCY, default=868.95): cv.float_range(min=300.0, max=928.0),
+            # Advanced: Polling interval for CC1101 (milliseconds)
+            # Lower values = better reception but higher CPU load
+            # At 100kbps, data arrives at 12.5 bytes/ms, FIFO is 64 bytes
+            # Default 2ms is recommended. Values >5ms may cause FIFO overflow and frame loss.
+            cv.Optional(CONF_POLLING_INTERVAL, default=2): cv.int_range(min=1, max=10),
             cv.Optional(CONF_ON_FRAME): automation.validate_automation(
                 {
                     cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(FrameTrigger),
@@ -123,6 +129,10 @@ async def to_code(config):
         # Set frequency if specified
         if CONF_FREQUENCY in config:
             cg.add(radio_var.set_frequency(config[CONF_FREQUENCY]))
+
+        # Set polling interval (CC1101 only - used for polling-based reception)
+        if CONF_POLLING_INTERVAL in config:
+            cg.add(radio_var.set_polling_interval(config[CONF_POLLING_INTERVAL]))
     elif radio_type == "SX1276":
         # SX1276 uses reset and IRQ pins
         reset_pin = await cg.gpio_pin_expression(config[CONF_RESET_PIN])

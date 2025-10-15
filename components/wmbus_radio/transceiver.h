@@ -36,10 +36,13 @@ public:
   void set_spi(spi::SPIDelegate *spi);
   void set_reset_pin(InternalGPIOPin *reset_pin);
   void set_irq_pin(InternalGPIOPin *irq_pin);
+  void set_polling_interval(uint32_t interval_ms) { this->polling_interval_ms_ = interval_ms; }
+  uint32_t get_polling_interval() const { return this->polling_interval_ms_; }
 
 protected:
   InternalGPIOPin *reset_pin_;
   InternalGPIOPin *irq_pin_;
+  uint32_t polling_interval_ms_{2};  // Default 2ms for CC1101 polling
 
   virtual optional<uint8_t> read() = 0;
 

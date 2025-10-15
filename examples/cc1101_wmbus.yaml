@@ -60,6 +60,13 @@ wmbus_radio:
   gdo2_pin: GPIO16  # Sync word detected
   frequency: 868.95 # MHz (EU wM-Bus band, optional - this is default)
 
+  # Advanced: Polling interval in milliseconds (default: 2ms)
+  # Lower values = better reception reliability but higher CPU usage
+  # At 100kbps wM-Bus, data arrives at 12.5 bytes/ms, FIFO is 64 bytes
+  # Recommended: 2ms (default) for reliable reception
+  # Warning: Values >5ms may cause FIFO overflow and frame loss!
+  # polling_interval: 2
+
   # Optional: Trigger on every received frame
   on_frame:
     - then:
