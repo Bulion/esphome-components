@@ -115,7 +115,11 @@ public:
    * @brief Initialize the CC1101 driver with SPI device
    * @param spi_device SPI device handle from ESPHome
    */
-  explicit CC1101Driver(spi::SPIDevice<> *spi_device) : spi_(spi_device) {}
+  explicit CC1101Driver(spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST,
+                                        spi::CLOCK_POLARITY_LOW,
+                                        spi::CLOCK_PHASE_LEADING,
+                                        spi::DATA_RATE_2MHZ> *spi_device)
+      : spi_(spi_device) {}
 
   /**
    * @brief Read a single CC1101 register
@@ -176,7 +180,8 @@ public:
   void write_tx_fifo(const uint8_t *buffer, size_t length);
 
 private:
-  spi::SPIDevice<> *spi_;
+  spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARITY_LOW,
+                 spi::CLOCK_PHASE_LEADING, spi::DATA_RATE_2MHZ> *spi_;
 };
 
 } // namespace wmbus_radio

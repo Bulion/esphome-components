@@ -22,6 +22,11 @@ public:
     this->irq_pin_->attach_interrupt(callback, arg,
                                      gpio::INTERRUPT_FALLING_EDGE);
   }
+
+  /// @brief Check if this transceiver uses interrupt-driven reception
+  /// @return true if IRQ pin is configured (interrupt-driven), false for polling
+  bool has_irq_pin() const { return this->irq_pin_ != nullptr; }
+
   virtual void restart_rx() = 0;
   virtual int8_t get_rssi() = 0;
   virtual const char *get_name() = 0;

@@ -48,7 +48,7 @@
   X(Flow, M3H)                                                                 \
                                                                                \
   X(Voltage, Volt)                                                             \
-  X(Frequency, HZ)                                                             \
+  X(Frequency, HZ_)                                                            \
   X(Pressure, BAR)                                                             \
                                                                                \
   X(PointInTime, DateTimeLT)                                                   \
@@ -105,7 +105,7 @@ enum class Quantity {
   X(F, f, "°F", Temperature, "fahrenheit")                                     \
                                                                                \
   X(Volt, v, "V", Voltage, "volt")                                             \
-  X(HZ, hz, "Hz", Frequency, "hz")                                             \
+  X(HZ_, hz, "Hz", Frequency, "hz")                                            \
   X(PA, pa, "pa", Pressure, "pascal")                                          \
   X(BAR, bar, "bar", Pressure, "bar")                                          \
                                                                                \

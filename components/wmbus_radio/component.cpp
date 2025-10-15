@@ -27,8 +27,11 @@ void Radio::setup() {
 
   ESP_LOGI(TAG, "Receiver task created [%p]", this->receiver_task_handle_);
 
-  this->radio->attach_data_interrupt(Radio::wakeup_receiver_task_from_isr,
-                                     &(this->receiver_task_handle_));
+  // Attach interrupt only if radio supports it (has IRQ pin)
+  if (this->radio->has_irq_pin()) {
+    this->radio->attach_data_interrupt(Radio::wakeup_receiver_task_from_isr,
+                                       &(this->receiver_task_handle_));
+  }
 }
 
 void Radio::loop() {
@@ -36,17 +39,20 @@ void Radio::loop() {
   if (xQueueReceive(this->packet_queue_, &p, 0) != pdPASS)
     return;
 
-  // ESP_LOGI(TAG, "Have RAW data from radio (%zu bytes)",
-  //          p->calculate_payload_size());
+  ESP_LOGI(TAG, "Frame received from radio: %zu bytes (raw packet)",
+           p->calculate_payload_size());
 
   auto frame = p->convert_to_frame();
 
-  if (!frame)
+  if (!frame) {
+    ESP_LOGW(TAG, "Failed to convert packet to frame - invalid data format");
     return;
+  }
 
-  ESP_LOGI(TAG, "Have data (%zu bytes) [RSSI: %ddBm, mode: %s %s]",
+  ESP_LOGI(TAG, "Frame decoded: %zu bytes, RSSI: %ddBm, mode: %s, format: %s",
            frame->data().size(), frame->rssi(), toString(frame->link_mode()),
            frame->format().c_str());
+  ESP_LOGD(TAG, "Frame HEX: %s", frame->as_hex().c_str());
 
   uint8_t packet_handled = 0;
   for (auto &handler : this->handlers_)
@@ -76,12 +82,31 @@ void Radio::wakeup_receiver_task_from_isr(TaskHandle_t *arg) {
 }
 
 void Radio::receive_frame() {
-  this->radio->restart_rx();
+  // For interrupt-driven radios (SX1276), restart RX before waiting for interrupt
+  // For polling radios (CC1101), only restart on first call or after successful frame
+  bool use_interrupt = this->radio->has_irq_pin();
 
-  if (!ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(60000))) {
-    ESP_LOGD(TAG, "Radio interrupt timeout");
-    return;
+  static bool rx_initialized = false;
+  if (use_interrupt || !rx_initialized) {
+    this->radio->restart_rx();
+    if (!use_interrupt) {
+      rx_initialized = true;
+    }
   }
+
+  // For interrupt-driven radios, wait up to 1 minute for interrupt
+  // For polling radios, timeout quickly to poll frequently
+  // At 100kbps, 12.5 bytes/ms arrive - poll every 2ms to stay ahead of 64-byte FIFO
+  uint32_t timeout_ms = use_interrupt ? 60000 : 2; // 1 minute vs 2ms
+
+  if (!ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(timeout_ms))) {
+    if (use_interrupt) {
+      ESP_LOGD(TAG, "Radio interrupt timeout");
+      return;
+    }
+    // For polling radios, timeout is expected - just continue to polling
+  }
+
   auto packet = std::make_unique<Packet>();
 
   if (!this->radio->read_in_task(packet->rx_data_ptr(),
@@ -105,15 +130,17 @@ void Radio::receive_frame() {
   auto packet_ptr = packet.get();
 
   if (xQueueSend(this->packet_queue_, &packet_ptr, 0) == pdTRUE) {
+    ESP_LOGI(TAG, "Packet queued successfully (%zu bytes, RSSI: %ddBm)",
+             packet->calculate_payload_size(), this->radio->get_rssi());
     ESP_LOGV(TAG, "Queue items: %zu",
              uxQueueMessagesWaiting(this->packet_queue_));
-    ESP_LOGV(TAG, "Queue send success");
     packet.release();
   } else
     ESP_LOGW(TAG, "Queue send failed");
 }
 
 void Radio::receiver_task(Radio *arg) {
+  ESP_LOGI(TAG, "Receiver task started");
   int counter = 0;
   while (true)
     arg->receive_frame();

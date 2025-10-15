@@ -527,7 +527,7 @@ namespace
             VifScaling::None, DifSignedness::Signed,
             FieldMatcher::build()
             .set(DifVifKey("0AFFD900")),
-            Unit::HZ,
+            Unit::HZ_,
             0.01
             );
 
