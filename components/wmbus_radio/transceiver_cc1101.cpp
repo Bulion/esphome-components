@@ -414,14 +414,15 @@ bool CC1101::wait_for_data_() {
     return false;
   }
 
-  // Read first 3 bytes to determine frame type
-  uint8_t header[3];
-  this->driver_->read_rx_fifo(header, 3);
-  ESP_LOGD(TAG, "Header bytes: %02X %02X %02X", header[0], header[1], header[2]);
+  // Read first 4 bytes to determine frame type
+  // 4 bytes needed for Mode T detection: 4*8=32 bits = 5 complete 6-bit segments
+  uint8_t header[4];
+  this->driver_->read_rx_fifo(header, 4);
+  ESP_LOGD(TAG, "Header bytes: %02X %02X %02X %02X", header[0], header[1], header[2], header[3]);
 
   // Detect Mode C or Mode T
   if (header[0] == WMBUS_MODE_C_PREAMBLE) {
-    // Mode C
+    // Mode C - only uses first 3 bytes
     this->wmbus_mode_ = WMBusMode::MODE_C;
 
     if (header[1] == WMBUS_BLOCK_A_PREAMBLE) {
@@ -442,10 +443,9 @@ bool CC1101::wait_for_data_() {
     this->bytes_received_ = 1;
 
   } else {
-    // Try Mode T (3-of-6 encoded)
-    uint8_t decoded[2];
-    // Temporarily store in vector for decode3of6
-    std::vector<uint8_t> temp_header(header, header + 3);
+    // Try Mode T (3-of-6 encoded) - needs 4 bytes for clean decode
+    // 4 bytes = 32 bits = 5 segments = 2.5 decoded bytes (we need first byte = L-field)
+    std::vector<uint8_t> temp_header(header, header + 4);
     auto decoded_opt = decode3of6(temp_header);
 
     if (decoded_opt.has_value() && decoded_opt->size() >= 1) {
@@ -454,12 +454,12 @@ bool CC1101::wait_for_data_() {
       this->length_field_ = (*decoded_opt)[0];
       this->expected_length_ = encoded_size(mode_t_packet_size(this->length_field_));
 
-      // Store encoded bytes
-      this->rx_buffer_.insert(this->rx_buffer_.end(), header, header + 3);
-      this->bytes_received_ = 3;
+      // Store all 4 encoded bytes
+      this->rx_buffer_.insert(this->rx_buffer_.end(), header, header + 4);
+      this->bytes_received_ = 4;
     } else {
-      ESP_LOGV(TAG, "Unknown frame type, header: %02X %02X %02X", header[0],
-               header[1], header[2]);
+      ESP_LOGV(TAG, "Unknown frame type, header: %02X %02X %02X %02X", header[0],
+               header[1], header[2], header[3]);
       return false;
     }
   }
