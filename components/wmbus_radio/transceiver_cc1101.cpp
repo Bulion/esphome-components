@@ -485,7 +485,7 @@ bool CC1101::wait_for_data_() {
   // them immediately, the FIFO will overflow before next read() call.
   uint8_t bytes_in_fifo = this->driver_->read_status(CC1101Status::RXBYTES) & 0x7F;
   if (bytes_in_fifo > 0) {
-    ESP_LOGD(TAG, "Draining %d bytes from FIFO after header to prevent overflow", bytes_in_fifo);
+    ESP_LOGVV(TAG, "Draining %d bytes from FIFO after header to prevent overflow", bytes_in_fifo);
 
     // Calculate how many more bytes we need
     size_t bytes_remaining = this->expected_length_ - this->bytes_received_;
@@ -497,7 +497,7 @@ bool CC1101::wait_for_data_() {
       this->driver_->read_rx_fifo(this->rx_buffer_.data() + old_size, bytes_to_read);
       this->bytes_received_ += bytes_to_read;
 
-      ESP_LOGD(TAG, "Drained %zu bytes, total received: %zu/%zu",
+      ESP_LOGVV(TAG, "Drained %zu bytes, total received: %zu/%zu",
                bytes_to_read, this->bytes_received_, this->expected_length_);
     }
   }
@@ -554,18 +554,18 @@ bool CC1101::read_data_() {
 
   // Check if complete
   if (this->bytes_received_ >= this->expected_length_) {
-    ESP_LOGD(TAG, "Frame completion check: bytes_received=%zu, expected=%zu, buffer_size=%zu",
+    ESP_LOGVV(TAG, "Frame completion check: bytes_received=%zu, expected=%zu, buffer_size=%zu",
              this->bytes_received_, this->expected_length_, this->rx_buffer_.size());
 
     // Read any remaining bytes in FIFO
     uint8_t bytes_in_fifo = this->driver_->read_status(CC1101Status::RXBYTES) & 0x7F;
     if (bytes_in_fifo > 0) {
-      ESP_LOGD(TAG, "Frame complete, reading final %d bytes from FIFO", bytes_in_fifo);
+      ESP_LOGVV(TAG, "Frame complete, reading final %d bytes from FIFO", bytes_in_fifo);
       size_t old_size = this->rx_buffer_.size();
       this->rx_buffer_.resize(old_size + bytes_in_fifo);
       this->driver_->read_rx_fifo(this->rx_buffer_.data() + old_size,
                                    bytes_in_fifo);
-      ESP_LOGD(TAG, "After final read: buffer_size=%zu", this->rx_buffer_.size());
+      ESP_LOGVV(TAG, "After final read: buffer_size=%zu", this->rx_buffer_.size());
     }
     return true; // Frame complete
   }
