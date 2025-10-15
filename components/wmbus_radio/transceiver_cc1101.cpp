@@ -446,22 +446,24 @@ bool CC1101::wait_for_data_() {
   // Mode C without preamble: starts with 0x68 (long frame) or other valid frame start bytes
   } else if (header[0] == 0x68) {
     // Mode C long frame without preamble (preamble stripped by CC1101 sync detection)
-    // Format: 68 L L ... (L-field repeated twice)
+    // Format: 68 L L 68 [L bytes data] 16 [2-byte CRC]
     this->wmbus_mode_ = WMBusMode::MODE_C;
     this->wmbus_block_ = WMBusBlock::BLOCK_A;
 
     // In long frame format, L-field is at header[1] (and repeated at header[2])
     this->length_field_ = header[1];
 
-    // Expected length is L-field + frame overhead
-    // Long frame: 68 L L + L bytes + 16 (end marker + CRC)
-    this->expected_length_ = 3 + this->length_field_ + 2;  // 68 L L + data + CRC
+    // Expected length calculation for wM-Bus long frame:
+    // 68 L L 68 + [L bytes data] + 16 + [2-byte CRC]
+    // Total: 4 + L + 1 + 2 = L + 7 bytes
+    this->expected_length_ = this->length_field_ + 7;
 
-    // Store all 4 header bytes (68 L L + first data byte)
+    // Store all 4 header bytes (68 L L 68)
     this->rx_buffer_.insert(this->rx_buffer_.end(), header, header + 4);
     this->bytes_received_ = 4;
 
-    ESP_LOGD(TAG, "Mode C long frame detected: L=0x%02X (%d bytes)", this->length_field_, this->length_field_);
+    ESP_LOGD(TAG, "Mode C long frame detected: L=0x%02X (%d bytes), expected total: %zu bytes",
+             this->length_field_, this->length_field_, this->expected_length_);
 
   } else {
     // Try Mode T (3-of-6 encoded) - needs 4 bytes for clean decode
