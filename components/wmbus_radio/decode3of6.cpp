@@ -18,7 +18,7 @@ decode3of6(std::vector<uint8_t> &coded_data) {
       {0b110100, 0xC}, {0b110001, 0xD}, {0b110010, 0xE}, {0b101001, 0xF},
   };
 
-  // ESP_LOGD(TAG, "Decoding 3of6 data: %s", format_hex(coded_data).c_str());
+  ESP_LOGV(TAG, "Decoding %zu bytes (=> %zu 6-bit segments)", coded_data.size(), coded_data.size() * 8 / 6);
 
   std::vector<uint8_t> decodedBytes;
   auto segments = coded_data.size() * 8 / 6;
@@ -29,14 +29,27 @@ decode3of6(std::vector<uint8_t> &coded_data) {
     auto byte_idx = bit_idx / 8;
     auto bit_offset = bit_idx % 8;
 
+    // Check for buffer overflow
+    if (byte_idx >= coded_data.size()) {
+      ESP_LOGW(TAG, "Buffer overflow at segment %zu: byte_idx=%zu >= size=%zu", i, byte_idx, coded_data.size());
+      return {};
+    }
+
     uint8_t code = (data[byte_idx] << bit_offset);
-    if (bit_offset > 0)
+    if (bit_offset > 0) {
+      if (byte_idx + 1 >= coded_data.size()) {
+        ESP_LOGW(TAG, "Buffer overflow reading next byte at segment %zu: byte_idx+1=%zu >= size=%zu",
+                 i, byte_idx + 1, coded_data.size());
+        return {};
+      }
       code |= (data[byte_idx + 1] >> (8 - bit_offset));
+    }
     code >>= 2;
 
     auto it = lookupTable.find(code);
     if (it == lookupTable.end()) {
-      // ESP_LOGW(TAG, "Invalid code: 0x%02X", code);
+      ESP_LOGW(TAG, "Invalid 3-of-6 code at segment %zu: 0x%02X (bit_idx=%zu, byte=%02X)",
+               i, code, bit_idx, data[byte_idx]);
       return {};
     }
 
@@ -46,7 +59,7 @@ decode3of6(std::vector<uint8_t> &coded_data) {
       decodedBytes.back() |= it->second;
   }
 
-  // ESP_LOGV(TAG, "Successfully decoded %zu bytes", decodedBytes.size());
+  ESP_LOGV(TAG, "Successfully decoded %zu segments => %zu bytes", segments, decodedBytes.size());
   return decodedBytes;
 }
 
