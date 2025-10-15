@@ -443,40 +443,18 @@ bool CC1101::wait_for_data_() {
     this->rx_buffer_.push_back(this->length_field_);
     this->bytes_received_ = 1;
 
-  // Mode C without preamble: starts with 0x68 (long frame) or other valid frame start bytes
-  } else if (header[0] == 0x68) {
-    // Mode C long frame without preamble (preamble stripped by CC1101 sync detection)
-    // Format received: 68 L L 68 [L bytes data] 16 [2-byte CRC]
-    // Format expected by Packet class: 54 CD L [data + CRC]
-    this->wmbus_mode_ = WMBusMode::MODE_C;
-    this->wmbus_block_ = WMBusBlock::BLOCK_A;
-
-    // In long frame format, L-field is at header[1] (and repeated at header[2])
-    this->length_field_ = header[1];
-
-    // FIFO contains: 68 L L 68 [L bytes data] 16 [2-byte CRC] = L+7 bytes total
-    // We want buffer: 54 CD L [L bytes data] 16 [2-byte CRC] = L+6 bytes total
-    // Already read 4 bytes from FIFO (68 L L 68), need L+3 more from FIFO
-    // Already stored 0 bytes in buffer, will store L+6 bytes total
-    this->expected_length_ = this->length_field_ + 6;  // Final buffer size
-
-    // Convert to Packet class format: store preamble (54 CD L) instead of (68 L L 68)
-    this->rx_buffer_.push_back(WMBUS_MODE_C_PREAMBLE);     // 0x54
-    this->rx_buffer_.push_back(WMBUS_BLOCK_A_PREAMBLE);    // 0xCD
-    this->rx_buffer_.push_back(this->length_field_);        // L
-    // We stored 3 bytes, need L+3 more to reach expected_length of L+6
-    this->bytes_received_ = 3;
-
-    ESP_LOGD(TAG, "Mode C long frame: L=0x%02X, expected_length=%zu, need %zu more bytes",
-             this->length_field_, this->expected_length_, this->expected_length_ - this->bytes_received_);
-
   } else {
-    // Try Mode T (3-of-6 encoded) - needs 4 bytes for clean decode
-    // 4 bytes = 32 bits = 5 segments = 2.5 decoded bytes (we need first byte = L-field)
+    // Not Mode C with preamble - could be Mode C without preamble or Mode T
+    // CC1101 strips the sync word (54 3D), leaving either:
+    //   Mode C: L-field + telegram data
+    //   Mode T: 3-of-6 encoded data
+
+    // Try Mode T first (3-of-6 encoded)
     std::vector<uint8_t> temp_header(header, header + 4);
     auto decoded_opt = decode3of6(temp_header);
 
     if (decoded_opt.has_value() && decoded_opt->size() >= 1) {
+      // Successfully decoded as Mode T
       this->wmbus_mode_ = WMBusMode::MODE_T;
       this->wmbus_block_ = WMBusBlock::BLOCK_A;
       this->length_field_ = (*decoded_opt)[0];
@@ -485,10 +463,30 @@ bool CC1101::wait_for_data_() {
       // Store all 4 encoded bytes
       this->rx_buffer_.insert(this->rx_buffer_.end(), header, header + 4);
       this->bytes_received_ = 4;
+
+      ESP_LOGD(TAG, "Mode T detected: L=0x%02X, expected_length=%zu",
+               this->length_field_, this->expected_length_);
     } else {
-      ESP_LOGV(TAG, "Unknown frame type, header: %02X %02X %02X %02X", header[0],
-               header[1], header[2], header[3]);
-      return false;
+      // 3-of-6 decode failed - assume Mode C without preamble
+      // Format: L [C M A CI data CRCs]
+      // Need to prepend 54 CD for Packet class
+      this->wmbus_mode_ = WMBusMode::MODE_C;
+      this->wmbus_block_ = WMBusBlock::BLOCK_A;
+
+      // First byte is L-field
+      this->length_field_ = header[0];
+
+      // Calculate expected size using same formula as Mode C with preamble
+      this->expected_length_ = 2 + mode_t_packet_size(this->length_field_);
+
+      // Prepend 54 CD, then store all 4 header bytes
+      this->rx_buffer_.push_back(WMBUS_MODE_C_PREAMBLE);   // 0x54
+      this->rx_buffer_.push_back(WMBUS_BLOCK_A_PREAMBLE);  // 0xCD
+      this->rx_buffer_.insert(this->rx_buffer_.end(), header, header + 4);
+      this->bytes_received_ = 6;  // 2 (preamble) + 4 (header)
+
+      ESP_LOGD(TAG, "Mode C (no preamble) detected: L=0x%02X, expected_length=%zu",
+               this->length_field_, this->expected_length_);
     }
   }
 
