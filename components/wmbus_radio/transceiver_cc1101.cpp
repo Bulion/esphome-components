@@ -267,35 +267,7 @@ optional<uint8_t> CC1101::read() {
                  static_cast<char>(this->wmbus_mode_),
                  static_cast<char>(this->wmbus_block_));
 
-        // Decode 3-of-6 if Mode T (do this BEFORE logging hex data)
-        if (this->wmbus_mode_ == WMBusMode::MODE_T) {
-          // Log encoded data at VERBOSE level for debugging reception issues
-          ESP_LOGVV(TAG, "Encoded frame: %zu bytes", this->rx_buffer_.size());
-
-          auto decoded = decode3of6(this->rx_buffer_);
-          if (!decoded.has_value()) {
-            // Log first 30 bytes of encoded data to help diagnose decode failures
-            if (this->rx_buffer_.size() > 0) {
-              std::string hex_str;
-              size_t log_bytes = std::min(this->rx_buffer_.size(), (size_t)30);
-              hex_str.reserve(log_bytes * 3);
-              for (size_t i = 0; i < log_bytes; i++) {
-                char buf[4];
-                snprintf(buf, sizeof(buf), "%02X ", this->rx_buffer_[i]);
-                hex_str += buf;
-              }
-              ESP_LOGW(TAG, "3-of-6 decode failed - encoded data (first %zu bytes): %s", log_bytes, hex_str.c_str());
-            } else {
-              ESP_LOGW(TAG, "3-of-6 decode failed - frame data may be corrupted");
-            }
-            this->rx_state_ = RxLoopState::INIT_RX;
-            return {};
-          }
-          this->rx_buffer_ = std::move(decoded.value());
-          ESP_LOGD(TAG, "3-of-6 decode successful, decoded to %zu bytes", this->rx_buffer_.size());
-        }
-
-        // Log decoded frame data as HEX for analysis
+        // Log complete frame data BEFORE 3-of-6 decode (so we see encoded data even if decode fails)
         if (this->rx_buffer_.size() > 0) {
           std::string hex_str;
           hex_str.reserve(this->rx_buffer_.size() * 3);
@@ -304,7 +276,35 @@ optional<uint8_t> CC1101::read() {
             snprintf(buf, sizeof(buf), "%02X ", this->rx_buffer_[i]);
             hex_str += buf;
           }
-          ESP_LOGD(TAG, "Frame data (%zu bytes): %s", this->rx_buffer_.size(), hex_str.c_str());
+          if (this->wmbus_mode_ == WMBusMode::MODE_T) {
+            ESP_LOGD(TAG, "Encoded frame data (%zu bytes): %s", this->rx_buffer_.size(), hex_str.c_str());
+          } else {
+            ESP_LOGD(TAG, "Frame data (%zu bytes): %s", this->rx_buffer_.size(), hex_str.c_str());
+          }
+        }
+
+        // Decode 3-of-6 if Mode T
+        if (this->wmbus_mode_ == WMBusMode::MODE_T) {
+          auto decoded = decode3of6(this->rx_buffer_);
+          if (!decoded.has_value()) {
+            ESP_LOGW(TAG, "3-of-6 decode failed");
+            this->rx_state_ = RxLoopState::INIT_RX;
+            return {};
+          }
+          this->rx_buffer_ = std::move(decoded.value());
+          ESP_LOGD(TAG, "3-of-6 decode successful, decoded to %zu bytes", this->rx_buffer_.size());
+
+          // Log decoded frame data as HEX for analysis
+          if (this->rx_buffer_.size() > 0) {
+            std::string hex_str;
+            hex_str.reserve(this->rx_buffer_.size() * 3);
+            for (size_t i = 0; i < this->rx_buffer_.size(); i++) {
+              char buf[4];
+              snprintf(buf, sizeof(buf), "%02X ", this->rx_buffer_[i]);
+              hex_str += buf;
+            }
+            ESP_LOGD(TAG, "Decoded frame data (%zu bytes): %s", this->rx_buffer_.size(), hex_str.c_str());
+          }
         }
 
         // Return first byte to indicate frame ready
