@@ -268,15 +268,20 @@ optional<uint8_t> CC1101::read() {
                  this->length_field_);
 
         // Log complete frame data as HEX (for data validation)
+        // Split into chunks to avoid ESPHome 512-byte log buffer limit
         if (this->rx_buffer_.size() > 0) {
-          std::string hex_str;
-          hex_str.reserve(this->rx_buffer_.size() * 3);
-          for (size_t i = 0; i < this->rx_buffer_.size(); i++) {
-            char buf[4];
-            snprintf(buf, sizeof(buf), "%02X ", this->rx_buffer_[i]);
-            hex_str += buf;
+          const size_t chunk_size = 32;  // 32 bytes = 96 chars in hex (well under 512 byte limit)
+          for (size_t offset = 0; offset < this->rx_buffer_.size(); offset += chunk_size) {
+            size_t chunk_len = std::min(chunk_size, this->rx_buffer_.size() - offset);
+            std::string hex_str;
+            hex_str.reserve(chunk_len * 3);
+            for (size_t i = 0; i < chunk_len; i++) {
+              char buf[4];
+              snprintf(buf, sizeof(buf), "%02X ", this->rx_buffer_[offset + i]);
+              hex_str += buf;
+            }
+            ESP_LOGI(TAG, "Frame [%3zu-%3zu]: %s", offset, offset + chunk_len - 1, hex_str.c_str());
           }
-          ESP_LOGI(TAG, "Frame data (%zu bytes): %s", this->rx_buffer_.size(), hex_str.c_str());
         }
 
         // Decode 3-of-6 if Mode T
