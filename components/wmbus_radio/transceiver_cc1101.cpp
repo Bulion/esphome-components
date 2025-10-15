@@ -446,48 +446,33 @@ bool CC1101::wait_for_data_() {
   } else {
     // Not Mode C with preamble - could be Mode C without preamble or Mode T
     // CC1101 strips the sync word (54 3D), leaving either:
-    //   Mode C: L-field + telegram data
-    //   Mode T: 3-of-6 encoded data
+    //   Mode C: L C M M A A A A A A CI [data]
+    //   Mode T: 3-of-6 encoded L-field + data
 
-    // Try Mode T first (3-of-6 encoded)
-    std::vector<uint8_t> temp_header(header, header + 4);
-    auto decoded_opt = decode3of6(temp_header);
+    // Mode C is the default for wireless M-Bus - assume Mode C unless we detect Mode T
+    // Mode T detection: Check if first byte looks like 3-of-6 encoded data
+    // Valid 3-of-6 codes have exactly 3 ones and 3 zeros in each 6-bit symbol
 
-    if (decoded_opt.has_value() && decoded_opt->size() >= 1) {
-      // Successfully decoded as Mode T
-      this->wmbus_mode_ = WMBusMode::MODE_T;
-      this->wmbus_block_ = WMBusBlock::BLOCK_A;
-      this->length_field_ = (*decoded_opt)[0];
-      this->expected_length_ = encoded_size(mode_t_packet_size(this->length_field_));
+    // For now, assume Mode C by default (safer, more common)
+    // TODO: Implement better Mode T detection based on bit patterns
 
-      // Store all 4 encoded bytes
-      this->rx_buffer_.insert(this->rx_buffer_.end(), header, header + 4);
-      this->bytes_received_ = 4;
+    this->wmbus_mode_ = WMBusMode::MODE_C;
+    this->wmbus_block_ = WMBusBlock::BLOCK_A;
 
-      ESP_LOGD(TAG, "Mode T detected: L=0x%02X, expected_length=%zu",
-               this->length_field_, this->expected_length_);
-    } else {
-      // 3-of-6 decode failed - assume Mode C without preamble
-      // Format: L [C M A CI data CRCs]
-      // Need to prepend 54 CD for Packet class
-      this->wmbus_mode_ = WMBusMode::MODE_C;
-      this->wmbus_block_ = WMBusBlock::BLOCK_A;
+    // First byte is L-field
+    this->length_field_ = header[0];
 
-      // First byte is L-field
-      this->length_field_ = header[0];
+    // Calculate expected size using same formula as Mode C with preamble
+    this->expected_length_ = 2 + mode_t_packet_size(this->length_field_);
 
-      // Calculate expected size using same formula as Mode C with preamble
-      this->expected_length_ = 2 + mode_t_packet_size(this->length_field_);
+    // Prepend 54 CD, then store all 4 header bytes
+    this->rx_buffer_.push_back(WMBUS_MODE_C_PREAMBLE);   // 0x54
+    this->rx_buffer_.push_back(WMBUS_BLOCK_A_PREAMBLE);  // 0xCD
+    this->rx_buffer_.insert(this->rx_buffer_.end(), header, header + 4);
+    this->bytes_received_ = 6;  // 2 (preamble) + 4 (header)
 
-      // Prepend 54 CD, then store all 4 header bytes
-      this->rx_buffer_.push_back(WMBUS_MODE_C_PREAMBLE);   // 0x54
-      this->rx_buffer_.push_back(WMBUS_BLOCK_A_PREAMBLE);  // 0xCD
-      this->rx_buffer_.insert(this->rx_buffer_.end(), header, header + 4);
-      this->bytes_received_ = 6;  // 2 (preamble) + 4 (header)
-
-      ESP_LOGD(TAG, "Mode C (no preamble) detected: L=0x%02X, expected_length=%zu",
-               this->length_field_, this->expected_length_);
-    }
+    ESP_LOGD(TAG, "Mode C (no preamble) assumed: L=0x%02X, expected_length=%zu",
+             this->length_field_, this->expected_length_);
   }
 
   ESP_LOGV(TAG, "Frame detected: mode=%c, block=%c, L=0x%02X, expected=%zu",
