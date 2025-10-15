@@ -446,24 +446,29 @@ bool CC1101::wait_for_data_() {
   // Mode C without preamble: starts with 0x68 (long frame) or other valid frame start bytes
   } else if (header[0] == 0x68) {
     // Mode C long frame without preamble (preamble stripped by CC1101 sync detection)
-    // Format: 68 L L 68 [L bytes data] 16 [2-byte CRC]
+    // Format received: 68 L L 68 [L bytes data] 16 [2-byte CRC]
+    // Format expected by Packet class: 54 CD L [data + CRC]
     this->wmbus_mode_ = WMBusMode::MODE_C;
     this->wmbus_block_ = WMBusBlock::BLOCK_A;
 
     // In long frame format, L-field is at header[1] (and repeated at header[2])
     this->length_field_ = header[1];
 
-    // Expected length calculation for wM-Bus long frame:
-    // 68 L L 68 + [L bytes data] + 16 + [2-byte CRC]
-    // Total: 4 + L + 1 + 2 = L + 7 bytes
-    this->expected_length_ = this->length_field_ + 7;
+    // FIFO contains: 68 L L 68 [L bytes data] 16 [2-byte CRC] = L+7 bytes total
+    // We want buffer: 54 CD L [L bytes data] 16 [2-byte CRC] = L+6 bytes total
+    // Already read 4 bytes from FIFO (68 L L 68), need L+3 more from FIFO
+    // Already stored 0 bytes in buffer, will store L+6 bytes total
+    this->expected_length_ = this->length_field_ + 6;  // Final buffer size
 
-    // Store all 4 header bytes (68 L L 68)
-    this->rx_buffer_.insert(this->rx_buffer_.end(), header, header + 4);
-    this->bytes_received_ = 4;
+    // Convert to Packet class format: store preamble (54 CD L) instead of (68 L L 68)
+    this->rx_buffer_.push_back(WMBUS_MODE_C_PREAMBLE);     // 0x54
+    this->rx_buffer_.push_back(WMBUS_BLOCK_A_PREAMBLE);    // 0xCD
+    this->rx_buffer_.push_back(this->length_field_);        // L
+    // We stored 3 bytes, need L+3 more to reach expected_length of L+6
+    this->bytes_received_ = 3;
 
-    ESP_LOGD(TAG, "Mode C long frame detected: L=0x%02X (%d bytes), expected total: %zu bytes",
-             this->length_field_, this->length_field_, this->expected_length_);
+    ESP_LOGD(TAG, "Mode C long frame: L=0x%02X, expected_length=%zu, need %zu more bytes",
+             this->length_field_, this->expected_length_, this->expected_length_ - this->bytes_received_);
 
   } else {
     // Try Mode T (3-of-6 encoded) - needs 4 bytes for clean decode
