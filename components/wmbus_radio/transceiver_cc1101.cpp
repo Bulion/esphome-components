@@ -262,12 +262,12 @@ optional<uint8_t> CC1101::read() {
 
       if (this->read_data_()) {
         // Frame complete!
-        ESP_LOGD(TAG, "Frame received: %zu bytes (buffer: %zu), mode: %c, block: %c",
-                 this->bytes_received_, this->rx_buffer_.size(),
+        ESP_LOGI(TAG, "Frame received: %zu bytes, mode: %c, L=0x%02X",
+                 this->rx_buffer_.size(),
                  static_cast<char>(this->wmbus_mode_),
-                 static_cast<char>(this->wmbus_block_));
+                 this->length_field_);
 
-        // Log complete frame data BEFORE 3-of-6 decode (so we see encoded data even if decode fails)
+        // Log complete frame data as HEX (for data validation)
         if (this->rx_buffer_.size() > 0) {
           std::string hex_str;
           hex_str.reserve(this->rx_buffer_.size() * 3);
@@ -276,11 +276,7 @@ optional<uint8_t> CC1101::read() {
             snprintf(buf, sizeof(buf), "%02X ", this->rx_buffer_[i]);
             hex_str += buf;
           }
-          if (this->wmbus_mode_ == WMBusMode::MODE_T) {
-            ESP_LOGD(TAG, "Encoded frame data (%zu bytes): %s", this->rx_buffer_.size(), hex_str.c_str());
-          } else {
-            ESP_LOGD(TAG, "Frame data (%zu bytes): %s", this->rx_buffer_.size(), hex_str.c_str());
-          }
+          ESP_LOGI(TAG, "Frame data (%zu bytes): %s", this->rx_buffer_.size(), hex_str.c_str());
         }
 
         // Decode 3-of-6 if Mode T
