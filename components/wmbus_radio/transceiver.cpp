@@ -34,15 +34,21 @@ void RadioTransceiver::set_irq_pin(InternalGPIOPin *irq_pin) {
 }
 
 void RadioTransceiver::reset() {
-  this->reset_pin_->digital_write(0);
-  delay(5);
-  this->reset_pin_->digital_write(1);
-  delay(5);
+  if (this->reset_pin_ != nullptr) {
+    this->reset_pin_->digital_write(0);
+    delay(5);
+    this->reset_pin_->digital_write(1);
+    delay(5);
+  }
 }
 
 void RadioTransceiver::common_setup() {
-  this->reset_pin_->setup();
-  this->irq_pin_->setup();
+  if (this->reset_pin_ != nullptr) {
+    this->reset_pin_->setup();
+  }
+  if (this->irq_pin_ != nullptr) {
+    this->irq_pin_->setup();
+  }
   this->spi_setup();
 }
 
@@ -71,8 +77,12 @@ void RadioTransceiver::spi_write(uint8_t address, uint8_t data) {
 
 void RadioTransceiver::dump_config() {
   ESP_LOGCONFIG(TAG, "Transceiver: %s", this->get_name());
-  LOG_PIN("  Reset Pin: ", this->reset_pin_);
-  LOG_PIN("  IRQ Pin: ", this->irq_pin_);
+  if (this->reset_pin_ != nullptr) {
+    LOG_PIN("  Reset Pin: ", this->reset_pin_);
+  }
+  if (this->irq_pin_ != nullptr) {
+    LOG_PIN("  IRQ Pin: ", this->irq_pin_);
+  }
 }
 } // namespace wmbus_radio
 } // namespace esphome
