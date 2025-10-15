@@ -1,0 +1,166 @@
+# Example ESPHome configuration for wM-Bus reception using CC1101 transceiver
+#
+# Hardware: ESP32 + CC1101 module
+# For more information: https://github.com/SzczepanLeon/esphome-components
+#
+# CC1101 Pin Connection Guide:
+# ESP32    ->  CC1101
+# ----------------------
+# GPIO18   ->  CSn  (Chip Select)
+# GPIO23   ->  SI   (MOSI - Master Out Slave In)
+# GPIO19   ->  SO   (MISO - Master In Slave Out)
+# GPIO5    ->  SCLK (SPI Clock)
+# GPIO4    ->  GDO0 (FIFO threshold indicator)
+# GPIO16   ->  GDO2 (Sync word detected)
+# 3.3V     ->  VCC
+# GND      ->  GND
+#
+# Note: CC1101 has no hardware reset pin - it uses software reset (SRES strobe)
+
+substitutions:
+  name: "wmbus-cc1101"
+  friendly_name: "wM-Bus CC1101"
+
+esphome:
+  name: "${name}"
+  friendly_name: "${friendly_name}"
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf  # Required! CC1101 driver uses ESP-IDF
+
+external_components:
+  - source: github://SzczepanLeon/esphome-components@main
+    refresh: 0d
+
+logger:
+  level: DEBUG
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+api:
+
+ota:
+  - platform: esphome
+
+# SPI bus configuration
+spi:
+  clk_pin: GPIO5
+  mosi_pin: GPIO23
+  miso_pin: GPIO19
+
+# CC1101 wM-Bus radio configuration
+wmbus_radio:
+  radio_type: CC1101
+  cs_pin: GPIO18
+  gdo0_pin: GPIO4   # FIFO threshold indicator
+  gdo2_pin: GPIO16  # Sync word detected
+  frequency: 868.95 # MHz (EU wM-Bus band, optional - this is default)
+
+  # Optional: Trigger on every received frame
+  on_frame:
+    - then:
+        - logger.log:
+            format: "Frame received: RSSI=%ddBm, Size=%d bytes, Mode=%s"
+            args: [ 'frame->rssi()', 'frame->data().size()', 'toString(frame->link_mode())' ]
+
+# wM-Bus common configuration
+wmbus_common:
+  drivers: all  # Or specify specific drivers: [apator162, amiplus, ...]
+
+# Example meter configurations
+# Uncomment and configure for your meters:
+
+# wmbus_meter:
+#   # Example 1: Electricity meter (Amiplus)
+#   - id: electricity_meter
+#     meter_id: 0x12345678  # Your meter ID (hex)
+#     type: amiplus
+#     key: "00000000000000000000000000000000"  # Encryption key (32 hex chars, or all zeros for no encryption)
+#     mode:
+#       - T1  # T-mode (100 kbps with 3-of-6 encoding)
+#       - C1  # C-mode (100 kbps)
+#
+#   # Example 2: Water meter (Izar)
+#   - id: water_meter
+#     meter_id: 12345  # Your meter ID (decimal)
+#     type: izar
+#     # Trigger on telegram reception
+#     on_telegram:
+#       then:
+#         - logger.log: "Water meter telegram received!"
+
+# sensor:
+#   # Example: Read electricity consumption
+#   - platform: wmbus_meter
+#     parent_id: electricity_meter
+#     field: total_energy_consumption_kwh
+#     name: "Total Energy"
+#     accuracy_decimals: 3
+#     device_class: energy
+#     state_class: total_increasing
+#     unit_of_measurement: "kWh"
+#
+#   # Example: Read current power
+#   - platform: wmbus_meter
+#     parent_id: electricity_meter
+#     field: current_power_consumption_kw
+#     name: "Current Power"
+#     accuracy_decimals: 2
+#     device_class: power
+#     state_class: measurement
+#     unit_of_measurement: "kW"
+#     filters:
+#       - multiply: 1000  # Convert to Watts
+#
+#   # Example: Read water consumption
+#   - platform: wmbus_meter
+#     parent_id: water_meter
+#     field: total_m3
+#     name: "Total Water"
+#     accuracy_decimals: 3
+#     device_class: water
+#     state_class: total_increasing
+#     unit_of_measurement: "m³"
+#
+#   # Example: RSSI signal strength
+#   - platform: wmbus_meter
+#     parent_id: water_meter
+#     field: rssi_dbm
+#     name: "Water Meter RSSI"
+#     device_class: signal_strength
+#     unit_of_measurement: "dBm"
+
+# text_sensor:
+#   # Example: Meter timestamp
+#   - platform: wmbus_meter
+#     parent_id: electricity_meter
+#     field: timestamp
+#     name: "Meter Timestamp"
+
+# Optional: Send raw telegrams to MQTT
+# mqtt:
+#   broker: your.mqtt.broker
+#   port: 1883
+#
+# # Send telegrams in RTLwMBUS format
+# wmbus_radio:
+#   on_frame:
+#     - mqtt.publish:
+#         topic: wmbus/telegram
+#         payload: !lambda return frame->as_rtlwmbus();
+
+# Optional: Send telegrams via TCP/UDP socket
+# socket_transmitter:
+#   id: my_socket
+#   ip_address: 192.168.1.100
+#   port: 3333
+#   protocol: TCP
+#
+# wmbus_radio:
+#   on_frame:
+#     - socket_transmitter.send:
+#         data: !lambda return frame->as_hex();
