@@ -222,8 +222,6 @@ void checkIfMultipleWmbusMetersRunning();
 
 bool findBytes(std::vector<uchar> &v, uchar a, uchar b, uchar c, size_t *out);
 
-enum class OutputFormat { NONE, PLAIN, TERMINAL, JSON, HTML };
-
 // Joing two status strings with a space, but merge OKs.
 // I.e. "OK" + "OK" --> "OK"
 //      "ERROR" + "OK"  --> "ERROR"

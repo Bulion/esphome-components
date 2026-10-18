@@ -91,11 +91,7 @@ protected:
   void triggerUpdate(Telegram *t);
   void setExpectedELLSecurityMode(ELLSecurityMode dsm);
   void setExpectedTPLSecurityMode(TPLSecurityMode tsm);
-  void addShellMeterAdded(std::string cmdline);
-  void addShellMeterUpdated(std::string cmdline);
   void addExtraConstantField(std::string ecf);
-  std::vector<std::string> &shellCmdlinesMeterAdded();
-  std::vector<std::string> &shellCmdlinesMeterUpdated();
   std::vector<std::string> &meterExtraConstantFields();
   void setMeterType(MeterType mt);
   void addLinkMode(LinkMode lm);
@@ -176,9 +172,6 @@ protected:
   bool handleTelegram(AboutTelegram &about, std::vector<uchar> frame,
                       bool simulated, std::vector<Address> *addresses,
                       bool *id_match, Telegram *out_analyzed = NULL);
-  void createMeterEnv(std::string id, std::vector<std::string> *envs,
-                      std::vector<std::string>
-                          *more_json); // Add this json "key"="value" strings.
   void printMeter(
       Telegram *t, std::string *human_readable, std::string *fields,
       char separator, std::string *json, std::vector<std::string> *envs,
@@ -193,7 +186,6 @@ protected:
 
   FieldInfo *findFieldInfo(std::string vname, Quantity xuantity);
   std::string renderJsonOnlyDefaultUnit(std::string vname, Quantity xuantity);
-  std::string debugValues();
 
   void processFieldExtractors(Telegram *t);
   void processFieldCalculators();
@@ -241,8 +233,6 @@ private:
   time_t datetime_of_update_{};
   time_t datetime_of_poll_{};
   LinkModeSet link_modes_{};
-  std::vector<std::string> shell_cmdlines_added_;
-  std::vector<std::string> shell_cmdlines_updated_;
   std::vector<std::string> extra_constant_fields_;
   time_t poll_interval_{};
   Translate::Lookup mfct_tpl_status_bits_ = NoLookup;

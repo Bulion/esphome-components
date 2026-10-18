@@ -51,6 +51,7 @@ public:
   int8_t get_rssi() override;
   const char *get_name() override;
   bool is_frame_oriented() const override;
+  gpio::InterruptType irq_interrupt_type() const override;
   void set_gdo0_pin(InternalGPIOPin *pin);
   void set_gdo2_pin(InternalGPIOPin *pin);
   void set_frequency(float freq_mhz);
@@ -87,6 +88,10 @@ private:
   static constexpr uint8_t RX_FIFO_THRESHOLD = 10;
   static constexpr size_t MAX_FIXED_LENGTH = 256;
   static constexpr size_t MAX_FRAME_SIZE = 512;
+  // MARCSTATE errata: retry up to 5 times with 100 µs gap (500 µs total) waiting
+  // for the CC1101 FIFO to settle after the state machine has gone IDLE.
+  static constexpr int MARCSTATE_RETRY_COUNT = 5;
+  static constexpr uint32_t MARCSTATE_RETRY_DELAY_US = 100;
 };
 
 }

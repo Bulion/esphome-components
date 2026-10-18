@@ -21,6 +21,7 @@
 #include "units.h"
 #include "util.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -330,15 +331,15 @@ struct DVEntry {
   DifVifKey dif_vif_key;
   MeasurementType measurement_type;
   Vif vif;
-  std::set<VIFCombinable> combinable_vifs;
-  std::set<uint16_t> combinable_vifs_raw;
+  std::vector<VIFCombinable> combinable_vifs;
+  std::vector<uint16_t> combinable_vifs_raw;
   StorageNr storage_nr;
   TariffNr tariff_nr;
   SubUnitNr subunit_nr;
   std::string value;
 
   DVEntry(int off, DifVifKey dvk, MeasurementType mt, Vif vi,
-          std::set<VIFCombinable> vc, std::set<uint16_t> vc_raw, StorageNr st,
+          std::vector<VIFCombinable> vc, std::vector<uint16_t> vc_raw, StorageNr st,
           TariffNr ta, SubUnitNr su, std::string &val)
       : offset(off), dif_vif_key(dvk), measurement_type(mt), vif(vi),
         combinable_vifs(vc), combinable_vifs_raw(vc_raw), storage_nr(st),
@@ -364,6 +365,72 @@ private:
       field_infos_; // The field infos selected to decode this entry.
 };
 
+// DVEntryMap: a vector-backed drop-in for std::map<string, pair<int, DVEntry>>.
+// A wM-Bus telegram typically carries 5–20 DIF/VIF entries, so linear search
+// is fast enough while a single contiguous allocation avoids the per-node heap
+// allocations of std::map — a key source of heap fragmentation on the ESP32.
+struct DVEntryMap {
+  using Value = std::pair<int, DVEntry>;
+  using Entry = std::pair<std::string, Value>;
+  using iterator = std::vector<Entry>::iterator;
+  using const_iterator = std::vector<Entry>::const_iterator;
+
+  DVEntryMap() : DVEntryMap(false) {}
+  explicit DVEntryMap(bool reserve_entries) {
+    if (reserve_entries)
+      entries_.reserve(16);
+  }
+
+  void clear() {
+    entries_.clear();
+  }
+
+  size_t size() const { return entries_.size(); }
+
+  iterator begin() { return entries_.begin(); }
+  iterator end() { return entries_.end(); }
+  const_iterator begin() const { return entries_.begin(); }
+  const_iterator end() const { return entries_.end(); }
+
+  size_t count(const std::string &key) const {
+    for (const auto &e : entries_)
+      if (e.first == key) return 1;
+    return 0;
+  }
+
+  iterator find(const std::string &key) {
+    for (auto it = entries_.begin(); it != entries_.end(); ++it)
+      if (it->first == key) return it;
+    return entries_.end();
+  }
+
+  const_iterator find(const std::string &key) const {
+    for (auto it = entries_.begin(); it != entries_.end(); ++it)
+      if (it->first == key) return it;
+    return entries_.end();
+  }
+
+  // Inserts a default-constructed Value if key is not present, matching
+  // std::map::operator[] semantics.
+  Value &operator[](const std::string &key) {
+    for (size_t i = 0; i < entries_.size(); ++i)
+      if (entries_[i].first == key) return entries_[i].second;
+    if (entries_.size() >= MAX_ENTRIES) {
+      debug("(dvparser) warning: DVEntryMap at capacity, dropping entry\n");
+      sentinel_ = Value{};
+      return sentinel_;
+    }
+    entries_.push_back({key, Value{}});
+    return entries_[entries_.size() - 1].second;
+  }
+
+  static constexpr size_t MAX_ENTRIES = 32;
+
+private:
+  std::vector<Entry> entries_;
+  Value sentinel_{};
+};
+
 struct FieldMatcher {
   // If not actually used, this remains false.
   bool active = false;
@@ -385,8 +452,8 @@ struct FieldMatcher {
   uint16_t vif_raw{};
 
   // Match any vif combinables.
-  std::set<VIFCombinable> vif_combinables;
-  std::set<uint16_t> vif_combinables_raw;
+  std::vector<VIFCombinable> vif_combinables;
+  std::vector<uint16_t> vif_combinables_raw;
 
   // Match the storage nr. If no storage is specified, default to match only 0.
   bool match_storage_nr = true;
@@ -433,11 +500,13 @@ struct FieldMatcher {
     return *this;
   }
   FieldMatcher &add(VIFCombinable v) {
-    vif_combinables.insert(v);
+    if (std::find(vif_combinables.begin(), vif_combinables.end(), v) == vif_combinables.end())
+      vif_combinables.push_back(v);
     return *this;
   }
   FieldMatcher &add(VIFCombinableRaw v) {
-    vif_combinables_raw.insert(v.value);
+    if (std::find(vif_combinables_raw.begin(), vif_combinables_raw.end(), v.value) == vif_combinables_raw.end())
+      vif_combinables_raw.push_back(v.value);
     return *this;
   }
   FieldMatcher &set(StorageNr s) {
@@ -499,7 +568,7 @@ struct Telegram;
 
 bool parseDV(Telegram *t, std::vector<uchar> &databytes,
              std::vector<uchar>::iterator data, size_t data_len,
-             std::map<std::string, std::pair<int, DVEntry>> *dv_entries,
+             DVEntryMap *dv_entries,
              std::vector<uchar>::iterator *format = NULL, size_t format_len = 0,
              uint16_t *format_hash = NULL);
 
@@ -510,49 +579,49 @@ bool parseDV(Telegram *t, std::vector<uchar> &databytes,
 // tariff/subunit)
 bool findKey(MeasurementType mt, VIFRange vi, StorageNr storagenr,
              TariffNr tariffnr, std::string *key,
-             std::map<std::string, std::pair<int, DVEntry>> *values);
+             DVEntryMap *values);
 // Some meters have multiple identical DIF/VIF values! Meh, they are not using
 // storage nrs or tariff nrs. So here we can pick for example nr 2 of an
 // identical set if DIF/VIF values. Nr 1 means the first found value.
 bool findKeyWithNr(MeasurementType mt, VIFRange vi, StorageNr storagenr,
                    TariffNr tariffnr, int indexnr, std::string *key,
-                   std::map<std::string, std::pair<int, DVEntry>> *values);
+                   DVEntryMap *values);
 
-bool hasKey(std::map<std::string, std::pair<int, DVEntry>> *values,
+bool hasKey(DVEntryMap *values,
             std::string key);
 
-bool extractDVuint8(std::map<std::string, std::pair<int, DVEntry>> *values,
+bool extractDVuint8(DVEntryMap *values,
                     std::string key, int *offset, uchar *value);
 
-bool extractDVuint16(std::map<std::string, std::pair<int, DVEntry>> *values,
+bool extractDVuint16(DVEntryMap *values,
                      std::string key, int *offset, uint16_t *value);
 
-bool extractDVuint24(std::map<std::string, std::pair<int, DVEntry>> *values,
+bool extractDVuint24(DVEntryMap *values,
                      std::string key, int *offset, uint32_t *value);
 
-bool extractDVuint32(std::map<std::string, std::pair<int, DVEntry>> *values,
+bool extractDVuint32(DVEntryMap *values,
                      std::string key, int *offset, uint32_t *value);
 
 // All values are scaled according to the vif and wmbusmeters scaling defaults.
-bool extractDVdouble(std::map<std::string, std::pair<int, DVEntry>> *values,
+bool extractDVdouble(DVEntryMap *values,
                      std::string key, int *offset, double *value,
                      bool auto_scale = true, bool force_unsigned = false);
 
 // Extract a value without scaling. Works for 8bits to 64 bits, binary and bcd.
-bool extractDVlong(std::map<std::string, std::pair<int, DVEntry>> *values,
+bool extractDVlong(DVEntryMap *values,
                    std::string key, int *offset, uint64_t *value);
 
 // Just copy the raw hex data into the string, not reversed or anything.
-bool extractDVHexString(std::map<std::string, std::pair<int, DVEntry>> *values,
+bool extractDVHexString(DVEntryMap *values,
                         std::string key, int *offset, std::string *value);
 
 // Read the content and attempt to reverse and transform it into a readble
 // string based on the dif information.
 bool extractDVReadableString(
-    std::map<std::string, std::pair<int, DVEntry>> *values, std::string key,
+    DVEntryMap *values, std::string key,
     int *offset, std::string *value);
 
-bool extractDVdate(std::map<std::string, std::pair<int, DVEntry>> *values,
+bool extractDVdate(DVEntryMap *values,
                    std::string key, int *offset, struct tm *value);
 
 const std::string &availableVIFRanges();

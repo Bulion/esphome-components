@@ -9,12 +9,19 @@
 
 #define BYTE(x, n) ((uint8_t)(x >> (n * 8)))
 
+// Allow overriding SPI clock rate at compile time.
+// Example (if supported by your ESPHome version):
+//   build_flags: ["-DWMBUS_RADIO_SPI_DATA_RATE=spi::DATA_RATE_200KHZ"]
+#ifndef WMBUS_RADIO_SPI_DATA_RATE
+#define WMBUS_RADIO_SPI_DATA_RATE spi::DATA_RATE_2MHZ
+#endif
+
 namespace esphome {
 namespace wmbus_radio {
 class RadioTransceiver
     : public Component,
       public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARITY_LOW,
-                            spi::CLOCK_PHASE_LEADING, spi::DATA_RATE_2MHZ> {
+                            spi::CLOCK_PHASE_LEADING, WMBUS_RADIO_SPI_DATA_RATE> {
 public:
   RadioTransceiver();
 

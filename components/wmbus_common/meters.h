@@ -64,17 +64,10 @@ private:
   std::string name_;
 };
 
-// Return a list of matching drivers, like: multical21
-void detectMeterDrivers(int manufacturer, int media, int version,
-                        std::vector<std::string> *drivers);
 // When entering the driver, check that the telegram is indeed known to be
 // compatible with the driver(type), if not then print a warning.
 bool isMeterDriverValid(DriverName driver_name, int manufacturer, int media,
                         int version);
-// For an unknown telegram, when analyzing check if the media type is reasonable
-// in relation to the driver. Ie. do not try to decode a door sensor telegram
-// with a water meter driver.
-bool isMeterDriverReasonableForMedia(std::string driver_name, int media);
 
 struct MeterInfo;
 bool isValidKey(const std::string &key, MeterInfo &mt);
@@ -94,8 +87,6 @@ struct MeterInfo {
   std::string key;              // Decryption key.
   LinkModeSet link_modes;
   int bps{}; // For mbus communication you need to know the baud rate.
-  std::vector<std::string> shells;
-  std::vector<std::string> new_meter_shells;
   std::vector<std::string>
       extra_constant_fields; // Additional static fields that are added to each
                              // message.
@@ -115,14 +106,12 @@ struct MeterInfo {
 
   MeterInfo(std::string b, std::string n, std::string e,
             std::vector<AddressExpression> aes, std::string k, LinkModeSet lms,
-            int baud, std::vector<std::string> &s, std::vector<std::string> &ms,
-            std::vector<std::string> &j, std::vector<std::string> &calcfs) {
+            int baud, std::vector<std::string> &j,
+            std::vector<std::string> &calcfs) {
     bus = b;
     name = n;
     extras = e, address_expressions = aes;
     key = k;
-    shells = s;
-    new_meter_shells = ms;
     extra_constant_fields = j;
     extra_calculated_fields = calcfs;
     link_modes = lms;
@@ -134,8 +123,6 @@ struct MeterInfo {
     name = "";
     address_expressions.clear();
     key = "";
-    shells.clear();
-    new_meter_shells.clear();
     extra_constant_fields.clear();
     extra_calculated_fields.clear();
     link_modes.clear();
@@ -257,12 +244,12 @@ enum class DifSignedness {
 const char *toString(DifSignedness s);
 DifSignedness toDifSignedness(const char *s);
 
-enum PrintProperty {
+enum class PrintProperty : int {
   REQUIRED = 1, // If no data has arrived, then print this field anyway with NaN
                 // or null.
   DEPRECATED = 2, // This field is about to be removed or changed in a newer
                   // driver, which will have a new name.
-  STATUS = 4, // This is >the< status field and it should read OK of not error
+  STATUS = 4, // This is >the< status field and it should read OK if no error
               // flags are set.
   INCLUDE_TPL_STATUS = 8,  // This text field also includes the tpl status
                            // decoding. multiple OK:s collapse to a single OK.
@@ -276,20 +263,44 @@ int toBit(PrintProperty p);
 const char *toString(PrintProperty p);
 PrintProperty toPrintProperty(const char *s);
 
+// Helpers to combine and test PrintProperty flags with ints
+constexpr int operator|(int lhs, PrintProperty rhs) {
+  return lhs | static_cast<int>(rhs);
+}
+constexpr int operator|(PrintProperty lhs, PrintProperty rhs) {
+  return static_cast<int>(lhs) | static_cast<int>(rhs);
+}
+constexpr int operator&(int lhs, PrintProperty rhs) {
+  return lhs & static_cast<int>(rhs);
+}
+
+// Support compound assignment for combining flags
+inline void operator|=(int &lhs, PrintProperty rhs) {
+  lhs |= static_cast<int>(rhs);
+}
+
+// Legacy unscoped flag aliases for existing driver code (avoid STATUS to prevent collision)
+constexpr int REQUIRED = static_cast<int>(PrintProperty::REQUIRED);
+constexpr int DEPRECATED = static_cast<int>(PrintProperty::DEPRECATED);
+constexpr int INCLUDE_TPL_STATUS = static_cast<int>(PrintProperty::INCLUDE_TPL_STATUS);
+constexpr int INJECT_INTO_STATUS = static_cast<int>(PrintProperty::INJECT_INTO_STATUS);
+constexpr int HIDE = static_cast<int>(PrintProperty::HIDE);
+
 struct PrintProperties {
   PrintProperties(int x) : props_(x) {}
+  PrintProperties(PrintProperty p) : props_(static_cast<int>(p)) {}
 
-  bool hasREQUIRED() { return props_ & PrintProperty::REQUIRED; }
-  bool hasDEPRECATED() { return props_ & PrintProperty::DEPRECATED; }
-  bool hasSTATUS() { return props_ & PrintProperty::STATUS; }
+  bool hasREQUIRED() { return props_ & static_cast<int>(PrintProperty::REQUIRED); }
+  bool hasDEPRECATED() { return props_ & static_cast<int>(PrintProperty::DEPRECATED); }
+  bool hasSTATUS() { return props_ & static_cast<int>(PrintProperty::STATUS); }
   bool hasINCLUDETPLSTATUS() {
-    return props_ & PrintProperty::INCLUDE_TPL_STATUS;
+    return props_ & static_cast<int>(PrintProperty::INCLUDE_TPL_STATUS);
   }
   bool hasINJECTINTOSTATUS() {
-    return props_ & PrintProperty::INJECT_INTO_STATUS;
+    return props_ & static_cast<int>(PrintProperty::INJECT_INTO_STATUS);
   }
-  bool hasHIDE() { return props_ & PrintProperty::HIDE; }
-  bool hasUnknown() { return props_ & PrintProperty::Unknown; }
+  bool hasHIDE() { return props_ & static_cast<int>(PrintProperty::HIDE); }
+  bool hasUnknown() { return props_ & static_cast<int>(PrintProperty::Unknown); }
 
 private:
   int props_;
@@ -443,8 +454,6 @@ struct Meter {
 
   virtual int numUpdates() = 0;
 
-  virtual void createMeterEnv(std::string id, std::vector<std::string> *envs,
-                              std::vector<std::string> *more_json) = 0;
   virtual void printMeter(Telegram *t, std::string *human_readable,
                           std::string *fields, char separator,
                           std::string *json, std::vector<std::string> *envs,
@@ -463,16 +472,10 @@ struct Meter {
   virtual MeterKeys *meterKeys() = 0;
 
   virtual void addExtraCalculatedField(std::string ecf) = 0;
-  virtual void addShellMeterAdded(std::string cmdline) = 0;
-  virtual void addShellMeterUpdated(std::string cmdline) = 0;
-  virtual std::vector<std::string> &shellCmdlinesMeterAdded() = 0;
-  virtual std::vector<std::string> &shellCmdlinesMeterUpdated() = 0;
 
   virtual FieldInfo *findFieldInfo(std::string vname, Quantity xuantity) = 0;
   virtual std::string renderJsonOnlyDefaultUnit(std::string vname,
                                                 Quantity xuantity) = 0;
-
-  virtual std::string debugValues() = 0;
 
   virtual ~Meter() = default;
 };
@@ -485,7 +488,5 @@ LinkModeSet toMeterLinkModeSet(const std::string &driver);
 struct Configuration;
 struct MeterInfo;
 std::shared_ptr<Meter> createMeter(MeterInfo *mi);
-
-const char *availableMeterTypes();
 
 #endif

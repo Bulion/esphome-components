@@ -3,6 +3,11 @@
 #include "esphome/components/spi/spi.h"
 #include <cstdint>
 
+// Must match the SPIDevice template used by RadioTransceiver.
+#ifndef WMBUS_RADIO_SPI_DATA_RATE
+#define WMBUS_RADIO_SPI_DATA_RATE spi::DATA_RATE_2MHZ
+#endif
+
 namespace esphome {
 namespace wmbus_radio {
 
@@ -100,7 +105,7 @@ public:
   explicit CC1101Driver(spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST,
                                         spi::CLOCK_POLARITY_LOW,
                                         spi::CLOCK_PHASE_LEADING,
-                                        spi::DATA_RATE_2MHZ> *spi_device)
+                                        WMBUS_RADIO_SPI_DATA_RATE> *spi_device)
       : spi_(spi_device) {}
 
   uint8_t read_register(CC1101Register reg);
@@ -121,7 +126,7 @@ public:
 
 private:
   spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARITY_LOW,
-                 spi::CLOCK_PHASE_LEADING, spi::DATA_RATE_2MHZ> *spi_;
+                 spi::CLOCK_PHASE_LEADING, WMBUS_RADIO_SPI_DATA_RATE> *spi_;
 };
 
 }

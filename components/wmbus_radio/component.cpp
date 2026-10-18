@@ -3,17 +3,20 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 
-#define ASSERT(expr, expected, before_exit)                                    \
-  {                                                                            \
-    auto result = (expr);                                                      \
-    if (!!result != expected) {                                                \
-      ESP_LOGE(TAG, "Assertion failed: %s -> %d", #expr, result);              \
-      before_exit;                                                             \
-      return;                                                                  \
-    }                                                                          \
-  }
-
-#define ASSERT_SETUP(expr) ASSERT(expr, 1, this->mark_failed())
+// wmbus components require substantial stack space for AES decryption, DV parsing, and
+// meter driver dispatch.  ESPHome >=2026.6 reduced the default loop task stack from 32 KB
+// to 8 KB, which is not enough and causes a LoadProhibited crash at boot.
+// Fix: add the following to your YAML config:
+//
+//   esp32:
+//     advanced:
+//       loop_task_stack_size: 32768
+//
+#ifdef ESPHOME_LOOP_TASK_STACK_SIZE
+static_assert(ESPHOME_LOOP_TASK_STACK_SIZE >= 16384,
+              "wmbus_radio requires a larger loop task stack. "
+              "Add 'loop_task_stack_size: 32768' under 'esp32: advanced:' in your YAML.");
+#endif
 
 namespace esphome {
 namespace wmbus_radio {
@@ -28,12 +31,33 @@ void Radio::set_radio(RadioTransceiver *radio) {
 }
 
 void Radio::setup() {
-  ASSERT_SETUP(this->packet_queue_ = xQueueCreate(3, sizeof(Packet *)));
+  this->packet_queue_ = xQueueCreate(3, sizeof(Packet *));
+  if (this->packet_queue_ == nullptr) {
+    ESP_LOGE(TAG, "Failed to create packet queue");
+    this->mark_failed();
+    return;
+  }
+
+  if (this->radio == nullptr) {
+    ESP_LOGE(TAG, "Radio transceiver is not configured");
+    this->mark_failed();
+    return;
+  }
 
   this->radio->set_packet_queue(this->packet_queue_);
 
-  ASSERT_SETUP(xTaskCreate((TaskFunction_t)this->receiver_task, "radio_recv",
-                           3 * 1024, this, 2, &(this->receiver_task_handle_)));
+  if (this->radio->is_failed()) {
+    ESP_LOGE(TAG, "Radio transceiver failed during setup; not starting receiver task");
+    this->mark_failed();
+    return;
+  }
+
+  if (xTaskCreate((TaskFunction_t)this->receiver_task, "radio_recv", 3 * 1024,
+                  this, 2, &(this->receiver_task_handle_)) != pdPASS) {
+    ESP_LOGE(TAG, "Failed to create receiver task");
+    this->mark_failed();
+    return;
+  }
 
   ESP_LOGI(TAG, "Receiver task created [%p]", this->receiver_task_handle_);
 
@@ -44,13 +68,15 @@ void Radio::setup() {
 }
 
 void Radio::wakeup_polling_receiver_task() {
-  if (this->radio->is_frame_oriented() && !this->radio->has_irq_pin()) {
-    xTaskNotifyGive(this->receiver_task_handle_);
-  }
+  // Intentionally empty.
+  // CC1101 now uses GDO0 as an interrupt pin (RISING_EDGE on FIFO threshold) so it
+  // no longer relies on periodic polling via this function.  It is retained for any
+  // future frame-oriented radio that truly has no interrupt capability.
 }
 
 void Radio::loop() {
-  this->wakeup_polling_receiver_task();
+  if (this->is_failed() || this->radio == nullptr)
+    return;
 
   Packet *p;
   if (xQueueReceive(this->packet_queue_, &p, 0) != pdPASS)
@@ -75,17 +101,19 @@ void Radio::loop() {
   if (frame->handlers_count())
     ESP_LOGI(TAG, "Telegram handled by %d handlers", frame->handlers_count());
   else {
-    ESP_LOGW(TAG, "Telegram not handled by any handler");
+#if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_DEBUG
+    ESP_LOGD(TAG, "Telegram not handled by any handler");
     Telegram t;
     if (t.parseHeader(frame->data()) && t.addresses.empty()) {
-      ESP_LOGW(TAG, "Check if telegram can be parsed on:");
+      ESP_LOGD(TAG, "Check if telegram can be parsed on:");
     } else {
-      ESP_LOGW(TAG, "Check if telegram with address %s can be parsed on:",
+      ESP_LOGD(TAG, "Check if telegram with address %s can be parsed on:",
                t.addresses.back().id.c_str());
     }
-    ESP_LOGW(TAG,
+    ESP_LOGD(TAG,
              (std::string{"https://wmbusmeters.org/analyze/"} + frame->as_hex())
                  .c_str());
+#endif
   }
 }
 
@@ -96,8 +124,18 @@ void Radio::wakeup_receiver_task_from_isr(TaskHandle_t *arg) {
 }
 
 void Radio::receive_frame() {
+  if (this->is_failed() || this->radio == nullptr || this->radio->is_failed()) {
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    return;
+  }
   bool is_frame_oriented = this->radio->is_frame_oriented();
   bool use_interrupt = this->radio->has_irq_pin();
+
+  if (is_frame_oriented && !use_interrupt) {
+    this->radio->run_receiver();
+    vTaskDelay(pdMS_TO_TICKS(this->radio->get_polling_interval()));
+    return;
+  }
 
   static bool rx_initialized = false;
   if (is_frame_oriented && !rx_initialized) {
@@ -114,6 +152,11 @@ void Radio::receive_frame() {
   if (!ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(timeout_ms))) {
     if (!is_frame_oriented) {
       ESP_LOGD(TAG, "Radio interrupt timeout");
+    } else if (use_interrupt) {
+      // Frame-oriented + IRQ: on timeout, still run the receiver as a safety net.
+      // This handles the tail bytes of a frame that fall below the FIFO threshold
+      // and would not trigger another GDO0 rising-edge interrupt on their own.
+      this->radio->run_receiver();
     }
     return;
   }

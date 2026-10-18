@@ -9,8 +9,12 @@
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/portmacro.h>
+#include "esp_log.h"
 #include "esp_random.h"
 #include "esp_system.h"
+
+#include <cstdlib>
+#include <new>
 
 namespace esphome {
 
@@ -105,5 +109,38 @@ bool has_custom_mac_address() {
 }
 
 }  // namespace esphome
+
+// On ESP-IDF, C++ exceptions are not supported. The default libstdc++
+// operator new tries to throw std::bad_alloc on allocation failure, which
+// routes through ESP-IDF's __wrap___cxa_allocate_exception stub. That stub
+// simply calls abort(), causing an "IllegalInstruction" fault crash with a
+// confusing backtrace (PC shows panic_abort, not the actual allocation site).
+//
+// By overriding operator new and operator new[] here with weak-symbol-
+// compatible definitions, we intercept OOM before the exception machinery is
+// entered, log the allocation size, and call abort() directly. This produces
+// a clear "Out of memory" log line before the reboot instead of an opaque
+// illegal-instruction fault.
+static void *esp32_new_impl(size_t size) {
+  void *ptr = malloc(size);
+  if (ptr == nullptr) {
+    ESP_LOGE("new", "Out of memory allocating %zu bytes", size);
+    abort();
+  }
+  return ptr;
+}
+
+void *operator new(size_t size) { return esp32_new_impl(size); }
+void *operator new[](size_t size) { return esp32_new_impl(size); }
+
+// nothrow variants: callers using new(std::nothrow) expect nullptr on failure
+// rather than an exception.  On ESP-IDF exceptions are disabled anyway, so
+// return nullptr directly instead of routing through the exception path.
+void *operator new(size_t size, const std::nothrow_t &) noexcept {
+  return malloc(size);
+}
+void *operator new[](size_t size, const std::nothrow_t &) noexcept {
+  return malloc(size);
+}
 
 #endif  // USE_ESP32

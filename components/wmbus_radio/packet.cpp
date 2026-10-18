@@ -20,12 +20,14 @@ Packet::Packet() { this->data_.reserve(WMBUS_PREAMBLE_SIZE); }
 
 // Determine the link mode based on the first byte of the data
 LinkMode Packet::link_mode() {
-  if (this->link_mode_ == LinkMode::UNKNOWN)
-    if (this->data_.size())
+  if (this->link_mode_ == LinkMode::UNKNOWN) {
+    if (this->data_.size()) {
       if (this->data_[0] == WMBUS_MODE_C_PREAMBLE)
         this->link_mode_ = LinkMode::C1;
       else
         this->link_mode_ = LinkMode::T1;
+    }
+  }
 
   return this->link_mode_;
 }
@@ -51,14 +53,22 @@ void Packet::set_requires_decode(bool required) {
 uint8_t Packet::l_field() {
   switch (this->link_mode()) {
   case LinkMode::C1:
-    return this->data_[2];
+    if (this->data_.size() > 2)
+      return this->data_[2];
+    break;
   case LinkMode::T1: {
-    if (!this->requires_decode_)
-      return this->data_[0];
+    if (!this->requires_decode_) {
+      if (!this->data_.empty())
+        return this->data_[0];
+      break;
+    }
     auto decoded = decode3of6(this->data_);
-    if (decoded)
+    if (decoded && !decoded->empty())
       return (*decoded)[0];
+    break;
   }
+  default:
+    break;
   }
   return 0;
 }
@@ -86,9 +96,9 @@ size_t Packet::expected_size() {
       else
         this->expected_size_ = nrBytes;
     }
-    else if (this->data_[1] == WMBUS_BLOCK_A_PREAMBLE)
+    else if (this->data_.size() > 1 && this->data_[1] == WMBUS_BLOCK_A_PREAMBLE)
       this->expected_size_ = WMBUS_MODE_C_SUFIX_LEN + nrBytes;
-    else if (this->data_[1] == WMBUS_BLOCK_B_PREAMBLE)
+    else if (this->data_.size() > 1 && this->data_[1] == WMBUS_BLOCK_B_PREAMBLE)
       this->expected_size_ = WMBUS_MODE_C_SUFIX_LEN + 1 + l_field;
   }
   ESP_LOGV(TAG, "expected_size: %zu", this->expected_size_);
@@ -128,12 +138,15 @@ std::optional<Frame> Packet::convert_to_frame() {
           this->data_ = decoded_data.value();
       }
     } else if (this->link_mode() == LinkMode::C1) {
-      if (this->data_[1] == WMBUS_BLOCK_A_PREAMBLE)
-        this->frame_format_ = "A";
-      else if (this->data_[1] == WMBUS_BLOCK_B_PREAMBLE)
-        this->frame_format_ = "B";
-      this->data_.erase(this->data_.begin(),
-                        this->data_.begin() + WMBUS_MODE_C_SUFIX_LEN);
+      if (this->data_.size() > 1) {
+        if (this->data_[1] == WMBUS_BLOCK_A_PREAMBLE)
+          this->frame_format_ = "A";
+        else if (this->data_[1] == WMBUS_BLOCK_B_PREAMBLE)
+          this->frame_format_ = "B";
+      }
+      if (this->data_.size() >= WMBUS_MODE_C_SUFIX_LEN)
+        this->data_.erase(this->data_.begin(),
+                          this->data_.begin() + WMBUS_MODE_C_SUFIX_LEN);
     } else {
       ESP_LOGE(TAG, "unknown link mode!");
     }
@@ -142,7 +155,12 @@ std::optional<Frame> Packet::convert_to_frame() {
              this->data_.size());
   }
 
-  removeAnyDLLCRCs(this->data_);
+  if (!removeAnyDLLCRCs(this->data_)) {
+    ESP_LOGW(TAG, "DLL CRC check failed, dropping corrupted frame (RSSI: %d dBm)",
+             this->rssi_);
+    delete this;
+    return frame;
+  }
   int dummy;
   if (checkWMBusFrame(this->data_, (size_t *)&dummy, &dummy, &dummy, false) ==
       FrameStatus::FullFrame)

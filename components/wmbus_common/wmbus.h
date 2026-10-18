@@ -30,52 +30,10 @@
 
 // Check and remove the data link layer CRCs from a wmbus telegram.
 // If the CRCs do not pass the test, return false.
-void removeAnyDLLCRCs(std::vector<uchar> &payload);
+bool removeAnyDLLCRCs(std::vector<uchar> &payload);
 bool trimCRCsFrameFormatA(std::vector<uchar> &payload);
 bool trimCRCsFrameFormatB(std::vector<uchar> &payload);
 
-#define LIST_OF_MBUS_DEVICES                                                   \
-  X(UNKNOWN, unknown, false, false, detectUNKNOWN)                             \
-  X(MBUS, mbus, true, false, detectMBUS)                                       \
-  X(AUTO, auto, false, false, detectAUTO)                                      \
-  X(AMB8465, amb8465, true, false, detectAMB8465AMB3665)                       \
-  X(AMB3665, amb3665, true, false, detectSKIP)                                 \
-  X(CUL, cul, true, false, detectCUL)                                          \
-  X(IM871A, im871a, true, false, detectIM871AIM170A)                           \
-  X(IM170A, im170a, true, false, detectSKIP)                                   \
-  X(IU891A, iu891a, true, false, detectIU891A)                                 \
-  X(RAWTTY, rawtty, true, false, detectRAWTTY)                                 \
-  X(HEXTTY, hextty, true, false, detectSKIP)                                   \
-  X(RC1180, rc1180, true, false, detectRC1180)                                 \
-  X(RTL433, rtl433, false, true, detectRTL433)                                 \
-  X(RTLWMBUS, rtlwmbus, false, true, detectRTLWMBUS)                           \
-  X(IU880B, iu880b, true, false, detectSKIP)                                   \
-  X(SIMULATION, simulation, false, false, detectSIMULATION)
-
-enum BusDeviceType {
-#define X(name, text, tty, rtlsdr, detector) DEVICE_##name,
-  LIST_OF_MBUS_DEVICES
-#undef X
-};
-
-enum class TelegramFormat {
-  UNKNOWN,
-  WMBUS_C_FIELD,  // The payload begins with the c-field
-  WMBUS_CI_FIELD, // The payload begins with the ci-field (ie the c-field + dll
-                  // is auto-prefixed.)
-  MBUS_SHORT_FRAME, // Short mbus frame (ie ack etc)
-  MBUS_LONG_FRAME   // Long mbus frame (ie data frame)
-};
-const char *toString(TelegramFormat format);
-TelegramFormat toTelegramFormat(const char *s);
-
-enum class DeviceMode { UNKNOWN, OTHER, METER };
-const char *toString(DeviceMode mode);
-DeviceMode toDeviceMode(const char *s);
-
-void setIgnoreDuplicateTelegrams(bool idt);
-void setDetailedFirst(bool df);
-bool getDetailedFirst();
 
 // In link mode S1, is used when both the transmitter and receiver are
 // stationary. It can be transmitted relatively seldom.
@@ -320,10 +278,13 @@ struct Meter;
 
 struct Telegram {
 private:
-  Telegram(Telegram &t) {}
+  Telegram(const Telegram&) = delete;
+  Telegram& operator=(const Telegram&) = delete;
 
 public:
   Telegram() = default;
+  explicit Telegram(bool reserve_dv_entries) : dv_entries(reserve_dv_entries) {}
+  Telegram& operator=(Telegram&&) = default;
 
   AboutTelegram about;
 
@@ -468,8 +429,6 @@ public:
   void addAddressMfctFirst(const std::vector<uchar>::iterator &pos);
   void addAddressIdFirst(const std::vector<uchar>::iterator &pos);
 
-  void print();
-
   // A vector of indentations and explanations, to be printed
   // below the raw data bytes to explain the telegram content.
   std::vector<Explanation> explanations;
@@ -484,9 +443,6 @@ public:
   // Add an explanation of data inside manufacturer specific data.
   void addSpecialExplanation(int offset, int len, KindOfData k, Understanding u,
                              const char *fmt, ...);
-  void explainParse(std::string intro, int from);
-  std::string analyzeParse(OutputFormat o, int *content_length,
-                           int *understood_content_length);
 
   bool parserWarns() { return parser_warns_; }
   bool isSimulated() { return is_simulated_; }
@@ -496,9 +452,7 @@ public:
 
   // The actual content of the (w)mbus telegram. The DifVif entries.
   // Mapped from their key for quick access to their offset and content.
-  std::map<std::string, std::pair<int, DVEntry>> dv_entries;
-
-  std::string autoDetectPossibleDrivers();
+  DVEntryMap dv_entries;
 
   // part of original telegram bytes, only filled if pre-processing modifies it
   std::vector<uchar> original;
@@ -521,12 +475,6 @@ private:
   bool parseAFL(std::vector<uchar>::iterator &pos);
   bool parseTPL(std::vector<uchar>::iterator &pos);
 
-  void printDLL();
-  void printELL();
-  void printNWL();
-  void printAFL();
-  void printTPL();
-
   bool parse_TPL_72(std::vector<uchar>::iterator &pos);
   bool parse_TPL_78(std::vector<uchar>::iterator &pos);
   bool parse_TPL_79(std::vector<uchar>::iterator &pos);
@@ -548,16 +496,6 @@ private:
   findFormatBytesFromKnownMeterSignatures(std::vector<uchar> *format_bytes);
 };
 
-struct SendBusContent {
-  LinkMode link_mode;
-  TelegramFormat format;
-  std::string bus;
-  std::string content;
-
-  static bool isLikely(const std::string &s);
-  bool parse(const std::string &s);
-};
-
 struct Meter;
 
 std::string manufacturer(int m_field);
@@ -566,16 +504,8 @@ std::string mediaTypeJSON(int a_field_device_type, int m_field);
 bool isCiFieldOfType(int ci_field, CI_TYPE type);
 int ciFieldLength(int ci_field);
 bool isCiFieldManufacturerSpecific(int ci_field);
-std::string ciType(int ci_field);
-std::string cType(int c_field);
-bool isValidWMBusCField(int c_field);
-bool isValidMBusCField(int c_field);
-std::string ccType(int cc_field);
 std::string difType(int dif);
 double vifScale(int vif);
-std::string
-vifKey(int vif); // E.g. temperature energy power mass_flow volume_flow
-std::string vifUnit(int vif);                     // E.g. m3 c kwh kw MJ MJh
 std::string vifType(int vif);                     // Long description
 std::string vifeType(int dif, int vif, int vife); // Long description
 
@@ -601,13 +531,6 @@ const char *toString(FrameStatus fs);
 FrameStatus checkWMBusFrame(std::vector<uchar> &data, size_t *frame_length,
                             int *payload_len_out, int *payload_offset,
                             bool only_test);
-
-FrameStatus checkMBusFrame(std::vector<uchar> &data, size_t *frame_length,
-                           int *payload_len_out, int *payload_offset,
-                           bool only_test);
-
-// Remember meters id/mfct/ver/type combos that we should only warn once for.
-bool warned_for_telegram_before(Telegram *t, std::vector<uchar> &dll_a);
 
 ////////////////// MBUS
 
